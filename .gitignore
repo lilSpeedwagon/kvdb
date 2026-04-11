@@ -20,7 +20,8 @@ target
 # Local env
 .env
 
-
 # Added by cargo
-
 /target
+
+# Other
+.DS_Store
