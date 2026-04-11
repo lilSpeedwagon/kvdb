@@ -34,6 +34,8 @@ Follow up features:
   - Consensus configuration
 - Persistence configuration (always, on timer)
 - Capacity limits and data eviction policies (FIFO, LIFO, etc)
+- Users with permissions
+- Collections with user permissions (or just set by prefix)
 
 ## MVP Plan
 
@@ -43,3 +45,7 @@ Follow up features:
 - [ ] Simple network protocol
 - [ ] Sync server and DB engine
 - [ ] Basic CLI
+
+## Notes
+
+- Consider `anyhow` for error handling
