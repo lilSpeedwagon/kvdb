@@ -12,8 +12,9 @@ use crate::server::serialize;
 use crate::types::Deserializable;
 use crate::cmd_queue;
 
-
 const SERVER_VERSION: u16 = 1u16;
+const CMD_EXEC_TIMEOUT: Duration = Duration::from_secs(30 * 60);  // TODO: move to config
+
 
 fn serialize_response(responses: Vec<models::ResponseCommand>) -> models::Result<Vec<u8>> {
     let command_count = responses.len();
@@ -114,6 +115,11 @@ fn handle_command(
     }
 }
 
+/// Handle a single incoming connection.
+/// Runs an inner loop to read multiple requests within one connection while `keep_alive` is sent.
+/// # Arguments
+/// - `queue_sender` producer for db engine commands, part of MPSC queue
+/// - `stream` raw TCP stream of the received connection
 fn handle_connection(
     mut queue_sender: cmd_queue::models::CmdQueueSender,
     mut stream: net::TcpStream,
@@ -132,42 +138,18 @@ fn handle_connection(
         }
         let keep_alive = request.header.keep_alive != 0;
 
+        // Queue and handle all commands one-by-one.
         log::debug!("Handling request {}", request);
-        let response_receivers = vec![];
-        response_receivers.reserve(request.commands.len());
-        
-        // Commands are sent one-by-one, so the DB engine can handle them
-        // separately in order of receiving those from different server workers.
+        let responses = vec![];
+        responses.reserve(request.commands.len());
         for cmd in request.commands {
-            let (response_sender, response_receiver) = std::sync::mpsc::channel();
-            let command_to_queue = cmd_queue::models::QueuedCommand{
-                command: cmd.command,
-                callback_channel: response_sender,
-            };
-            queue_sender.send(command_to_queue);
-            response_receivers.push(response_receiver);
+            let response = handle_command(queue_sender, cmd.command, CMD_EXEC_TIMEOUT)?;
+            responses.push(response);
         }
-
-        // Wait for all responses.
-        let responses = response_receivers.iter().map(|receiver| {
-            // TODO: Wait with timeout.
-            let recv_result = receiver.recv();
-            return match recv_result {
-                Ok(cmd_result) => {
-                    match cmd_result {
-                        Ok(result) => result,
-                        Err(err) => err,
-                    }
-                },
-                Err(err) => {
-                    log::error!("Failed to receive command execution result from storage queue: {}", err);
-                    Err(Box::from("Unable to receive executed command result"))
-                },
-            }
-        });
 
         let response_data = serialize_response(responses)?;
         log::debug!("{}", String::from_utf8_lossy(&response_data));
+        
         let mut writer = io::BufWriter::new(&mut stream);
         writer.write(response_data.as_slice())?;
         writer.flush()?;

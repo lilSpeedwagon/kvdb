@@ -128,13 +128,31 @@ impl<T: types::Serializable> types::Serializable for Option<T> {
 
 impl types::Serializable for String {
     fn serialize(&self, stream: &mut dyn io::Write) -> types::Result<()> {
-        let expected_size = mem::size_of::<String>() + SIZE_LEN;
+        let expected_size = SIZE_LEN + mem::size_of::<u8>() * self.len();
         let mut buffer = vec![];
         buffer.reserve(expected_size);
 
         let len = self.len() as u64;
         buffer.extend(len.to_be_bytes());
         buffer.extend(self.as_bytes());
+
+        stream.write(&buffer)?;
+
+        Ok(())
+    }
+}
+
+impl <T: types::Serializable> types::Serializable for Vec<T> {
+    fn serialize(&self, stream: &mut dyn io::Write) -> types::Result<()> {
+        let expected_size = SIZE_LEN + mem::size_of::<T>() * self.len();
+        let mut buffer = vec![];
+        buffer.reserve(expected_size);
+        
+        let len = self.len() as u64;
+        buffer.extend(len.to_be_bytes());
+        for element in self {
+            element.serialize(&mut buffer)?;
+        }
 
         stream.write(&buffer)?;
 

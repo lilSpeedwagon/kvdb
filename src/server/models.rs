@@ -1,6 +1,7 @@
-use std::fmt;
+use std::{fmt, io::Write};
 
 use crate::types;
+
 
 impl types::Deserializable for types::Value {
     fn deserialize(stream: &mut dyn std::io::Read) -> types::Result<Self> {
@@ -10,7 +11,7 @@ impl types::Deserializable for types::Value {
                 let value: String = types::Deserializable::deserialize(stream)?;
                 Ok(types::Value::String { value })
             },
-            _ => Err(Box::from(format!("Unknown value type: {}", value_type)))
+            _ => Err(Box::from(format!("Unknown value type: '{}'", value_type)))
         }
     }
 }
@@ -22,8 +23,20 @@ impl types::Deserializable for types::Command {
         match cmd_type {
             's' => {
                 let key: String = types::Deserializable::deserialize(stream)?;
-                let value: String = types::Deserializable::deserialize(stream)?;
-                Ok(types::Command::Set { key: key, value: value as Value })
+                let value_str: String = types::Deserializable::deserialize(stream)?;
+                let value = types::Value::String { value: value_str };
+                Ok(types::Command::Set { key: key, value: value })
+            },
+            'g' => {
+                let key: String = types::Deserializable::deserialize(stream)?;
+                Ok(types::Command::Get { key: key })
+            },
+            'r' => {
+                let key: String = types::Deserializable::deserialize(stream)?;
+                Ok(types::Command::Remove { key: key })
+            },
+            _ => {
+                Err(Box::from(format!("Unknown command type '{}'", cmd_type)))
             }
         }
     }
@@ -110,6 +123,38 @@ impl fmt::Display for Request {
     }
 }
 
+impl types::Serializable for types::Value {
+    fn serialize(&self, stream: &mut dyn std::io::Write) -> types::Result<()> {
+        match self {
+            types::Value::String { value } => {
+                value.serialize(stream)?;
+            },
+        }
+        Ok(())
+    }
+}
+
+impl types::Serializable for types::CommandResult {
+    fn serialize(&self, stream: &mut dyn std::io::Write) -> types::Result<()> {
+        let mut buffer = vec![];
+        match self {
+            types::CommandResult::Get { value } => {
+                buffer.write(&[b'g'])?;
+                value.serialize(&mut buffer)?;
+            },
+            types::CommandResult::Set {} => {
+                buffer.write(&[b's'])?;
+            },
+            types::CommandResult::Remove {} => {
+                buffer.write(&[b'r'])?;
+            },
+        };
+        
+        stream.write(&buffer)?;
+        Ok(())
+    }
+}
+
 pub struct ResponseHeader {
     pub version: u8,
     pub reserved_1: u8,
@@ -118,9 +163,28 @@ pub struct ResponseHeader {
     pub reserved_2: u32,
 }
 
+impl types::Serializable for ResponseHeader {
+    fn serialize(&self, stream: &mut dyn std::io::Write) -> types::Result<()> {
+        self.version.serialize(stream)?;
+        self.reserved_1.serialize(stream)?;
+        self.command_count.serialize(stream)?;
+        self.body_size.serialize(stream)?;
+        self.reserved_2.serialize(stream)?;
+        Ok(())
+    }
+}
+
 pub struct Response {
     pub header: ResponseHeader,
     pub commands: Vec<types::CommandResult>,
+}
+
+impl types::Serializable for Response {
+    fn serialize(&self, stream: &mut dyn std::io::Write) -> types::Result<()> {
+        self.header.serialize(stream)?;
+        self.commands.serialize(stream)?;
+        Ok(())
+    }
 }
 
 impl fmt::Display for Response {
