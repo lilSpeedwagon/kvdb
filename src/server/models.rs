@@ -1,4 +1,4 @@
-use std::{fmt, io::Write};
+use std::{fmt, io::Write, process::CommandArgs};
 
 use crate::types;
 
@@ -156,27 +156,65 @@ impl types::Serializable for types::CommandResult {
 }
 
 pub struct ResponseHeader {
-    pub version: u8,
-    pub reserved_1: u8,
+    pub version: u16,
     pub command_count: u16,
     pub body_size: u32,
-    pub reserved_2: u32,
+    pub reserved: u32,
 }
 
 impl types::Serializable for ResponseHeader {
     fn serialize(&self, stream: &mut dyn std::io::Write) -> types::Result<()> {
         self.version.serialize(stream)?;
-        self.reserved_1.serialize(stream)?;
         self.command_count.serialize(stream)?;
         self.body_size.serialize(stream)?;
-        self.reserved_2.serialize(stream)?;
+        self.reserved.serialize(stream)?;
+        Ok(())
+    }
+}
+
+pub enum CommandResultOrError {
+    Result { result: types::CommandResult },
+    Error { error_message: String },    
+}
+
+impl types::Serializable for CommandResultOrError {
+    fn serialize(&self, stream: &mut dyn std::io::Write) -> types::Result<()> {
+        let mut buffer = vec![];
+        
+        match self {
+            CommandResultOrError::Result{ result } => {
+                let is_ok = [1u8];
+                buffer.write(&is_ok)?;
+                result.serialize(&mut buffer);
+            },
+            CommandResultOrError::Error{ error_message } => {
+                let is_ok = [0u8];
+                buffer.write(&is_ok)?;
+                error_message.serialize(&mut buffer);
+            },
+        }
+        
+        stream.write(&buffer)?;
+        Ok(())
+    }
+}
+
+pub struct ResponseCommand {
+    id: u32,
+    result: CommandResultOrError,
+}
+
+impl types::Serializable for ResponseCommand {
+    fn serialize(&self, stream: &mut dyn std::io::Write) -> types::Result<()> {
+        self.id.serialize(stream)?;
+        self.result.serialize(stream)?;
         Ok(())
     }
 }
 
 pub struct Response {
     pub header: ResponseHeader,
-    pub commands: Vec<types::CommandResult>,
+    pub commands: Vec<ResponseCommand>,
 }
 
 impl types::Serializable for Response {

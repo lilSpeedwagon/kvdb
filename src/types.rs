@@ -3,6 +3,9 @@ use std::fmt;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+/// A thread safe variant of result.
+pub type SafeResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
 pub type Key = String;
 
 #[derive(Clone)]

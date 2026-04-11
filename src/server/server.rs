@@ -1,101 +1,57 @@
-use core::time;
 use std::net;
 use std::io;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::time::Duration;
 
-use crate::storage;
 use crate::threads;
 use crate::types;
 use crate::server::models;
-use crate::server::serialize;
 use crate::types::Deserializable;
 use crate::cmd_queue;
+use crate::types::Serializable;
 
 const SERVER_VERSION: u16 = 1u16;
 const CMD_EXEC_TIMEOUT: Duration = Duration::from_secs(30 * 60);  // TODO: move to config
 
 
-fn serialize_response(responses: Vec<models::ResponseCommand>) -> models::Result<Vec<u8>> {
-    let command_count = responses.len();
-    let mut body_buffer = Vec::new();
-    for response in responses {
-        match response {
-            models::ResponseCommand::Get { value } => {
-                body_buffer.write(&[b'g'])?;
-                value.serialize(&mut body_buffer)?;
-            },
-            models::ResponseCommand::Set {} => {
-                body_buffer.write(&[b's'])?;
-            },
-            models::ResponseCommand::Remove {} => {
-                body_buffer.write(&[b'r'])?;
-            },
-            models::ResponseCommand::Reset {} => {
-                body_buffer.write(&[b'z'])?;
-            }
-        };
+fn validate_request(request: &models::Request) -> types::Result<()> {
+    let header = &request.header;
+    if header.version > SERVER_VERSION {
+        return Err(
+            Box::from(
+                format!("Unsupported request version {}, server version: {}", header.version, SERVER_VERSION)
+            )
+        )
     }
 
-    let header =  models::ResponseHeader{
-        version: SERVER_VERSION,
-        reserved_1: 0u8,
-        command_count: command_count as u16,
-        body_size: body_buffer.len() as u32,
-        reserved_2: 0u32,
-    };
-
-    let mut response_buffer = Vec::new();
-    response_buffer.reserve(size_of::<models::ResponseHeader>() + body_buffer.len());
-    header.version.serialize(&mut response_buffer)?;
-    header.reserved_1.serialize(&mut response_buffer)?;
-    header.command_count.serialize(&mut response_buffer)?;
-    header.body_size.serialize(&mut response_buffer)?;
-    header.reserved_2.serialize(&mut response_buffer)?;
-    response_buffer.extend(body_buffer.iter());
-
-    Ok(response_buffer)
-}
-
-fn handle_request(
-    storage: &mut kv_log::KvLogStorage,
-    request: models::Request,
-) -> types::Result<Vec<types::CommandResult>> {
-    let mut responses = Vec::new();
-
-    for request_command in request.commands {
-        let cmd = request_command.command;
-        log::info!("Handling command {}", cmd);
-        let response_command = match command {
-            models::Command::Get { key } => {
-                let value = storage.get(key)?;
-                models::ResponseCommand::Get{value: value}
-            },
-            models::Command::Set { key, value } => {
-                storage.set(key, value)?;
-                models::ResponseCommand::Set{}
-            },
-            models::Command::Remove { key } => {
-                storage.remove(key)?;
-                models::ResponseCommand::Remove{}
-            },
-            models::Command::Reset { } => {
-                storage.reset()?;
-                models::ResponseCommand::Reset{}
-            },
-        };
-        responses.push(response_command);
+    let mut unique_ids = std::collections::HashSet::with_capacity(header.command_count as usize);
+    for cmd in &request.commands {
+        let seen = !unique_ids.insert(cmd.id);
+        if seen {
+            return Err(
+                Box::from(
+                    format!("Request command IDs are expected to be unique. ID '{}' is duplicated", cmd.id)
+                )
+            )
+        }
     }
 
-    Ok(responses)
+    Ok(())
 }
 
+
+/// Handle a single command from an incoming request.
+/// # Arguments
+/// - `queue_sender` producer for db engine commands, part of MPSC queue
+/// - `command` command to handle
+/// - `timeout` command processing timeout
 fn handle_command(
-    queue_sender: cmd_queue::models::CmdQueueSender,
+    queue_sender: &mut cmd_queue::models::CmdQueueSender,
     command: types::Command,
     timeout: Duration,
-) -> types::Result<types::CommandResult> {
-    log::debug!("Queueing command {} for execution", command);
+) -> types::SafeResult<types::CommandResult> {
+    let cmd_str = format!("{}", command);
+    log::debug!("Queueing command {} for execution", cmd_str);
 
     // Send the command to the mpsc queue and attach a callback result receiver channel.
     let (response_sender, response_receiver) = std::sync::mpsc::channel();
@@ -109,7 +65,7 @@ fn handle_command(
     match recv_result {
         Ok(cmd_result) => cmd_result,
         Err(err) => {
-            log::error!("Command {} execution result is not received after {}s: {}", command, timeout.as_secs(), err);
+            log::error!("Command {} execution result is not received after {}s: {}", cmd_str, timeout.as_secs(), err);
             Err(Box::from(format!("Command execution timeout after {}s", timeout.as_secs())))
         }
     }
@@ -117,6 +73,8 @@ fn handle_command(
 
 /// Handle a single incoming connection.
 /// Runs an inner loop to read multiple requests within one connection while `keep_alive` is sent.
+/// Each request can contain multiple commands. Each command is queued via MPSC queue to be processed
+/// by the storage engine.
 /// # Arguments
 /// - `queue_sender` producer for db engine commands, part of MPSC queue
 /// - `stream` raw TCP stream of the received connection
@@ -127,34 +85,51 @@ fn handle_connection(
     log::debug!("Handling incoming connection");
 
     loop {
+        // Parse request commands.
         let request = models::Request::deserialize(&mut stream)?;
-        let header = request.header;
-        if header.version > SERVER_VERSION {
-            return Err(
-                Box::from(
-                    format!("Unsupported request version {}, server version: {}", header.version, SERVER_VERSION)
-                )
-            )
-        }
-        let keep_alive = request.header.keep_alive != 0;
+        validate_request(&request);
 
-        // Queue and handle all commands one-by-one.
         log::debug!("Handling request {}", request);
-        let responses = vec![];
+        let keep_alive = request.header.keep_alive != 0;
+        
+        // Queue and handle all commands one-by-one.
+        let mut responses = vec![];
         responses.reserve(request.commands.len());
         for cmd in request.commands {
-            let response = handle_command(queue_sender, cmd.command, CMD_EXEC_TIMEOUT)?;
-            responses.push(response);
+            let result = match handle_command(&mut queue_sender, cmd.command, CMD_EXEC_TIMEOUT) {
+                Ok(result) => {
+                    models::CommandResultOrError::Result { result: result }
+                },
+                Err(err) => {
+                    models::CommandResultOrError::Error { error_message: format!("{}", err) }
+                },
+            };
+            let response_command = models::ResponseCommand{
+                id: cmd.id,
+                result: result,
+            };
+            responses.push(response_command);
         }
-
-        let response_data = serialize_response(responses)?;
-        log::debug!("{}", String::from_utf8_lossy(&response_data));
         
+        // Prepare and write back the response.
+        let mut response_body_buffer = vec![];
+        responses.serialize(&mut response_body_buffer)?;
+        let body_size = response_body_buffer.len();
+
+        let response_header = models::ResponseHeader{
+            version: SERVER_VERSION,
+            command_count: responses.len() as u16,
+            body_size: body_size as u32,
+            reserved: 0u32,
+        };
+
         let mut writer = io::BufWriter::new(&mut stream);
-        writer.write(response_data.as_slice())?;
+        response_header.serialize(&mut writer)?;
+        writer.write(&response_body_buffer)?;
         writer.flush()?;
         drop(writer);
 
+        // Wait for more requests if keep-alive is set or close the connection.
         // TODO: keepalive timeout
         if keep_alive {
             log::debug!("Request handled, keep connection alive");
