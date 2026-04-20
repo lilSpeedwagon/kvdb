@@ -2,7 +2,7 @@ use crate::storage::base;
 use crate::types;
 
 
-struct MemStorage {
+pub struct MemStorage {
     storage: std::collections::HashMap<types::Key, types::Value>,
 }
 

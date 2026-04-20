@@ -1,9 +1,11 @@
+use std::time::Duration;
+
 use clap;
 use clap::{Parser, ValueEnum};
 use simple_logger;
 
-use kvdb::storage::{base, lsm, mem, worker};
-use kvdb::types;
+use kvdb::storage;
+use kvdb::cmd_queue;
 use kvdb::server::server;
 use kvdb::threads::rayon;
 
@@ -33,9 +35,18 @@ enum LogLevel {
     Error,
 }
 
-fn run_storage_process(storage_processor: worker::StorageProcessor) -> std::thread::JoinHandle<()>{
+/// Run a new thread serving storage engine and waiting for commands to be executed via an MPSC channel.
+fn run_storage_worker(
+    cmd_receiver: std::sync::mpsc::Receiver<cmd_queue::models::QueuedCommand>,
+) -> std::thread::JoinHandle<()>{
     std::thread::spawn(move || {
-        storage_processor.run_in_loop();
+        // TODO: make storage type configureable
+        // TODO: pass storage args here
+        let storage_engine = Box::new(storage::mem::MemStorage::new());
+        let mut storage_queue_worker = cmd_queue::queue::StorageCommandQueueWorker::new(
+            cmd_receiver, storage_engine
+        );
+        storage_queue_worker.run_in_loop();
     })
 }
 
@@ -50,21 +61,24 @@ fn main() -> Result<(), Box::<dyn std::error::Error>> {
     };
     simple_logger::SimpleLogger::new().with_level(log_level).init().unwrap();
 
+     // TODO: move to config
+    const THREAD_POOL_SIZE: usize = 4;
+    const EXEC_TIMEOUT: Duration = Duration::from_secs(60);
+
+    // Prepare MPSC channel.
     let (sender, receiver) = std::sync::mpsc::channel();
 
-    // TODO: make storage type configureable
-    let storage = Box::new(mem::MemStorage::new());
-    let storage_processor = worker::StorageProcessor::new(receiver, storage);
-    let storage_thread = run_storage_process(storage_processor);
+    // Run storage engine process.
+    let storage_thread = run_storage_worker(receiver);
 
+    // Start the server
     log::info!("Starting server at {}:{} with at {}", cli.host, cli.port, cli.path);
-    const THREAD_POOL_SIZE: usize = 4; // TODO: move to config
     let thread_pool = Box::new(rayon::RayonThreadPool::new(THREAD_POOL_SIZE)?);
-    let mut server = server::Server::new(thread_pool, sender);
+    let mut server = server::Server::new(thread_pool, sender, EXEC_TIMEOUT);
     server.listen(cli.host, cli.port)?;
 
-    // TODO: graceful termination
-    storage_thread.join()?;
+    // TODO: graceful termination, for example Arc<bool> to exit infinite loops
+    storage_thread.join().expect("Cannot gracefully shutdown storage engine");
 
     return Ok(());
 }

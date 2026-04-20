@@ -200,8 +200,8 @@ impl types::Serializable for CommandResultOrError {
 }
 
 pub struct ResponseCommand {
-    id: u32,
-    result: CommandResultOrError,
+    pub id: u32,
+    pub result: CommandResultOrError,
 }
 
 impl types::Serializable for ResponseCommand {
