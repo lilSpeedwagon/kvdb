@@ -61,9 +61,9 @@ fn main() -> Result<(), Box::<dyn std::error::Error>> {
     };
     simple_logger::SimpleLogger::new().with_level(log_level).init().unwrap();
 
-     // TODO: move to config
+    // TODO: move to config
     const THREAD_POOL_SIZE: usize = 4;
-    const EXEC_TIMEOUT: Duration = Duration::from_secs(60);
+    const EXEC_TIMEOUT: Duration = Duration::from_secs(60 * 30);
 
     // Prepare MPSC channel.
     let (sender, receiver) = std::sync::mpsc::channel();

@@ -11,7 +11,6 @@ use crate::cmd_queue;
 use crate::types::Serializable;
 
 const SERVER_VERSION: u16 = 1u16;
-const CMD_EXEC_TIMEOUT: Duration = Duration::from_secs(30 * 60);  // TODO: move to config
 
 
 fn validate_request(request: &models::Request) -> types::Result<()> {
@@ -59,7 +58,7 @@ fn handle_command(
         command: command,
         callback_channel: response_sender,
     };
-    queue_sender.send(command_to_queue);
+    queue_sender.send(command_to_queue)?;
     
     let recv_result = response_receiver.recv_timeout(timeout);
     match recv_result {
@@ -81,13 +80,14 @@ fn handle_command(
 fn handle_connection(
     mut queue_sender: cmd_queue::models::CmdQueueSender,
     mut stream: net::TcpStream,
+    cmd_exec_timeout: Duration,
 ) -> types::Result<()> {
     log::debug!("Handling incoming connection");
 
     loop {
         // Parse request commands.
         let request = models::Request::deserialize(&mut stream)?;
-        validate_request(&request);
+        validate_request(&request)?;
 
         log::debug!("Handling request {}", request);
         let keep_alive = request.header.keep_alive != 0;
@@ -96,7 +96,7 @@ fn handle_connection(
         let mut responses = vec![];
         responses.reserve(request.commands.len());
         for cmd in request.commands {
-            let result = match handle_command(&mut queue_sender, cmd.command, CMD_EXEC_TIMEOUT) {
+            let result = match handle_command(&mut queue_sender, cmd.command, cmd_exec_timeout) {
                 Ok(result) => {
                     models::CommandResultOrError::Result { result: result }
                 },
@@ -180,9 +180,10 @@ impl Server {
             match connection_result {
                 Ok(stream) => {
                     let queue = self.cmd_queue.clone();
+                    let timeout = self.cmd_exec_timeout;
                     if let Err(err) = self.thread_pool.spawn(
                         Box::new(move || {
-                            match handle_connection(queue, stream) {
+                            match handle_connection(queue, stream, timeout) {
                                 Ok(_) => {},
                                 Err(err) => { log::error!("Request handling error: {}", err) }
                             }
