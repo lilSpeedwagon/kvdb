@@ -1,6 +1,6 @@
 use std::{fmt, io::Write};
 
-use crate::types;
+use crate::types::{self, Serializable};
 
 
 impl types::Deserializable for types::Value {
@@ -16,6 +16,16 @@ impl types::Deserializable for types::Value {
     }
 }
 
+impl types::Serializable for types::Value {
+    fn serialize(&self, stream: &mut dyn std::io::Write) -> types::Result<()> {
+        match self {
+            types::Value::String { value } => {
+                value.serialize(stream)?;
+            },
+        }
+        Ok(())
+    }
+}
 
 impl types::Deserializable for types::Command {
     fn deserialize(stream: &mut dyn std::io::Read) -> types::Result<Self> {
@@ -39,6 +49,30 @@ impl types::Deserializable for types::Command {
                 Err(Box::from(format!("Unknown command type '{}'", cmd_type)))
             }
         }
+    }
+}
+
+impl Serializable for types::Command {
+    fn serialize(&self, stream: &mut dyn std::io::Write) -> types::Result<()> {
+        match self {
+            Self::Get { key } => {
+                let cmd_type = 'g' as u8;
+                cmd_type.serialize(stream)?;
+                key.serialize(stream)?;
+            },
+            Self::Set { key, value } => {
+                let cmd_type = 's' as u8;
+                cmd_type.serialize(stream)?;
+                key.serialize(stream)?;
+                value.serialize(stream)?;
+            },
+            Self::Remove { key } => {
+                let cmd_type = 'r' as u8;
+                cmd_type.serialize(stream)?;
+                key.serialize(stream)?;
+            },
+        };
+        Ok(())
     }
 }
 
@@ -68,6 +102,18 @@ impl types::Deserializable for RequestHeader {
     }
 }
 
+impl types::Serializable for RequestHeader {
+    fn serialize(&self, stream: &mut dyn std::io::Write) -> types::Result<()> {
+        self.version.serialize(stream)?;
+        self.keep_alive.serialize(stream)?;
+        self.reserved.serialize(stream)?;
+        self.command_count.serialize(stream)?;
+        self.body_size.serialize(stream)?;
+        self.reserved2.serialize(stream)?;
+        Ok(())
+    }
+}
+
 pub struct RequestCommand {
     pub id: u32,
     pub command: types::Command,
@@ -81,6 +127,14 @@ impl types::Deserializable for RequestCommand {
                 command: types::Deserializable::deserialize(stream)?,
             }
         )
+    }
+}
+
+impl types::Serializable for RequestCommand {
+    fn serialize(&self, stream: &mut dyn std::io::Write) -> types::Result<()> {
+        self.id.serialize(stream)?;
+        self.command.serialize(stream)?;
+        Ok(())
     }
 }
 
@@ -110,6 +164,14 @@ impl types::Deserializable for Request {
     }
 }
 
+impl types::Serializable for Request {
+    fn serialize(&self, stream: &mut dyn std::io::Write) -> types::Result<()> {
+        self.header.serialize(stream)?;
+        self.commands.serialize(stream)?;
+        Ok(())
+    }
+}
+
 impl fmt::Display for Request {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -120,17 +182,6 @@ impl fmt::Display for Request {
             self.header.command_count,
             self.header.body_size,
         )
-    }
-}
-
-impl types::Serializable for types::Value {
-    fn serialize(&self, stream: &mut dyn std::io::Write) -> types::Result<()> {
-        match self {
-            types::Value::String { value } => {
-                value.serialize(stream)?;
-            },
-        }
-        Ok(())
     }
 }
 

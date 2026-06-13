@@ -1,3 +1,4 @@
+pub mod client;
 pub mod cmd_queue;
 pub mod proto;
 pub mod server;
