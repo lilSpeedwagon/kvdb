@@ -67,6 +67,7 @@ Primitive types are serialized as following:
 - numeric types as is, big-endian
 - boolean: 1 byte `0` or `1`
 - strings: first goes data size (8 bytes), then string characters as UTF-8
+- `Vec<T>`: first goes data size (8 bytes), then each array element as `T` serialization
 - `Option<T>`: boolean to show whether the value is present, then `T` serialization if present
 
 _TBD_

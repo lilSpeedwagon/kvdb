@@ -1,4 +1,4 @@
-use std::{fmt, io::Write, process::CommandArgs};
+use std::{fmt, io::Write};
 
 use crate::types;
 
@@ -185,12 +185,12 @@ impl types::Serializable for CommandResultOrError {
             CommandResultOrError::Result{ result } => {
                 let is_ok = [1u8];
                 buffer.write(&is_ok)?;
-                result.serialize(&mut buffer);
+                result.serialize(&mut buffer)?;
             },
             CommandResultOrError::Error{ error_message } => {
                 let is_ok = [0u8];
                 buffer.write(&is_ok)?;
-                error_message.serialize(&mut buffer);
+                error_message.serialize(&mut buffer)?;
             },
         }
         

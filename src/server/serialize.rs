@@ -95,7 +95,7 @@ macro_rules! impl_write_to_stream {
             impl types::Serializable for $t {
                 fn serialize(&self, stream: &mut dyn io::Write) -> types::Result<()> {
                     let bytes = self.to_be_bytes();
-                    stream.write(&bytes);
+                    stream.write(&bytes)?;
                     Ok(())
                 }
             }
@@ -120,7 +120,7 @@ impl<T: types::Serializable> types::Serializable for Option<T> {
             self.as_ref().unwrap().serialize(&mut buffer)?;
         }
 
-        stream.write(&buffer);
+        stream.write(&buffer)?;
         Ok(())
     }
 }
