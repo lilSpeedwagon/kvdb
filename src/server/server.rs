@@ -4,20 +4,22 @@ use std::io::Write;
 use std::time::Duration;
 
 use crate::cmd_queue;
-use crate::proto::models;
+use crate::proto;
 use crate::threads;
 use crate::types;
 use crate::types::{Deserializable, Serializable};
 
-const SERVER_VERSION: u16 = 1u16;
 
-
-fn validate_request(request: &models::Request) -> types::Result<()> {
+fn validate_request(request: &proto::models::Request) -> types::Result<()> {
     let header = &request.header;
-    if header.version > SERVER_VERSION {
+    if header.version > proto::version::PROTO_VERSION {
         return Err(
             Box::from(
-                format!("Unsupported request version {}, server version: {}", header.version, SERVER_VERSION)
+                format!(
+                    "Unsupported request version {}, server version: {}",
+                    header.version,
+                    proto::version::PROTO_VERSION,
+                )
             )
         )
     }
@@ -85,7 +87,7 @@ fn handle_connection(
 
     loop {
         // Parse request commands.
-        let request = models::Request::deserialize(&mut stream)?;
+        let request = proto::models::Request::deserialize(&mut stream)?;
         validate_request(&request)?;
 
         log::debug!("Handling request {}", request);
@@ -97,13 +99,13 @@ fn handle_connection(
         for cmd in request.commands {
             let result = match handle_command(&mut queue_sender, cmd.command, cmd_exec_timeout) {
                 Ok(result) => {
-                    models::CommandResultOrError::Result { result: result }
+                    proto::models::CommandResultOrError::Result { result: result }
                 },
                 Err(err) => {
-                    models::CommandResultOrError::Error { error_message: format!("{}", err) }
+                    proto::models::CommandResultOrError::Error { error_message: format!("{}", err) }
                 },
             };
-            let response_command = models::ResponseCommand{
+            let response_command = proto::models::ResponseCommand{
                 id: cmd.id,
                 result: result,
             };
@@ -115,8 +117,8 @@ fn handle_connection(
         responses.serialize(&mut response_body_buffer)?;
         let body_size = response_body_buffer.len();
 
-        let response_header = models::ResponseHeader{
-            version: SERVER_VERSION,
+        let response_header = proto::models::ResponseHeader{
+            version: proto::version::PROTO_VERSION,
             command_count: responses.len() as u16,
             body_size: body_size as u32,
             reserved: 0u32,
