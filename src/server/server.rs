@@ -3,12 +3,11 @@ use std::io;
 use std::io::Write;
 use std::time::Duration;
 
+use crate::cmd_queue;
+use crate::proto::models;
 use crate::threads;
 use crate::types;
-use crate::server::models;
-use crate::types::Deserializable;
-use crate::cmd_queue;
-use crate::types::Serializable;
+use crate::types::{Deserializable, Serializable};
 
 const SERVER_VERSION: u16 = 1u16;
 
