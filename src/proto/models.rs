@@ -1,6 +1,6 @@
 use std::{fmt, io::Write};
 
-use crate::types::{self, Serializable};
+use crate::types::{self, Deserializable, Serializable};
 
 
 impl types::Deserializable for types::Value {
@@ -185,6 +185,36 @@ impl fmt::Display for Request {
     }
 }
 
+pub struct ResponseHeader {
+    pub version: u16,
+    pub command_count: u16,
+    pub body_size: u32,
+    pub reserved: u32,
+}
+
+impl types::Serializable for ResponseHeader {
+    fn serialize(&self, stream: &mut dyn std::io::Write) -> types::Result<()> {
+        self.version.serialize(stream)?;
+        self.command_count.serialize(stream)?;
+        self.body_size.serialize(stream)?;
+        self.reserved.serialize(stream)?;
+        Ok(())
+    }
+}
+
+impl types::Deserializable for ResponseHeader {
+    fn deserialize(stream: &mut dyn std::io::Read) -> types::Result<Self> where Self: Sized {
+        Ok(
+            ResponseHeader {
+                version: types::Deserializable::deserialize(stream)?,
+                command_count: types::Deserializable::deserialize(stream)?,
+                body_size: types::Deserializable::deserialize(stream)?,
+                reserved: types::Deserializable::deserialize(stream)?,
+            }
+        )
+    }
+}
+
 impl types::Serializable for types::CommandResult {
     fn serialize(&self, stream: &mut dyn std::io::Write) -> types::Result<()> {
         let mut buffer = vec![];
@@ -206,20 +236,20 @@ impl types::Serializable for types::CommandResult {
     }
 }
 
-pub struct ResponseHeader {
-    pub version: u16,
-    pub command_count: u16,
-    pub body_size: u32,
-    pub reserved: u32,
-}
-
-impl types::Serializable for ResponseHeader {
-    fn serialize(&self, stream: &mut dyn std::io::Write) -> types::Result<()> {
-        self.version.serialize(stream)?;
-        self.command_count.serialize(stream)?;
-        self.body_size.serialize(stream)?;
-        self.reserved.serialize(stream)?;
-        Ok(())
+impl types::Deserializable for types::CommandResult {
+    fn deserialize(stream: &mut dyn std::io::Read) -> types::Result<Self> where Self: Sized {
+        let cmd_type = u8::deserialize(stream)? as char;
+        match cmd_type {
+            'g' => {
+                let value: Option<types::Value> = types::Deserializable::deserialize(stream)?;
+                Ok(types::CommandResult::Get { value: value })
+            },
+            's' => Ok(types::CommandResult::Set {}),
+            'r' => Ok(types::CommandResult::Remove {}),
+            _ => {
+                Err(Box::from(format!("Unknown command type '{}'", cmd_type)))
+            }
+        }
     }
 }
 
@@ -250,6 +280,19 @@ impl types::Serializable for CommandResultOrError {
     }
 }
 
+impl types::Deserializable for CommandResultOrError {
+    fn deserialize(stream: &mut dyn std::io::Read) -> types::Result<Self> where Self: Sized {
+        let is_ok: u8 = Deserializable::deserialize(stream)?;
+        if is_ok == 1u8 {
+            let result: types::CommandResult = Deserializable::deserialize(stream)?;
+            return Ok(CommandResultOrError::Result { result: result });
+        } else {
+            let err_msg: String = Deserializable::deserialize(stream)?;
+            return Ok(CommandResultOrError::Error { error_message: err_msg });
+        }
+    }
+}
+
 pub struct ResponseCommand {
     pub id: u32,
     pub result: CommandResultOrError,
@@ -263,6 +306,17 @@ impl types::Serializable for ResponseCommand {
     }
 }
 
+impl types::Deserializable for ResponseCommand {
+    fn deserialize(stream: &mut dyn std::io::Read) -> types::Result<Self> where Self: Sized {
+        Ok(
+            ResponseCommand{
+                id: Deserializable::deserialize(stream)?,
+                result: Deserializable::deserialize(stream)?,
+            }
+        )
+    }
+}
+
 pub struct Response {
     pub header: ResponseHeader,
     pub commands: Vec<ResponseCommand>,
@@ -273,6 +327,17 @@ impl types::Serializable for Response {
         self.header.serialize(stream)?;
         self.commands.serialize(stream)?;
         Ok(())
+    }
+}
+
+impl types::Deserializable for Response {
+    fn deserialize(stream: &mut dyn std::io::Read) -> types::Result<Self> where Self: Sized {
+        Ok(
+            Response {
+                header: Deserializable::deserialize(stream)?,
+                commands: Deserializable::deserialize(stream)?,
+            }
+        )
     }
 }
 

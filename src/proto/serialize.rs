@@ -2,6 +2,7 @@ use std::io;
 use std::mem;
 
 use crate::types;
+use crate::types::Deserializable;
 
 // Data size is written as 64-bit bin-endian unsigned integer.
 // This way data passed via disk/network can be correctly interpreted by other clients/servers.
@@ -85,6 +86,23 @@ impl types::Deserializable for String {
                 )
             }
         }
+    }
+}
+
+
+impl<T: types::Deserializable> types::Deserializable for Vec<T> {
+    fn deserialize(stream: &mut dyn io::Read) -> types::Result<Self> {
+        let mut size_buffer = [0u8; SIZE_LEN];
+        stream.read_exact(&mut size_buffer)?;
+        let size = u64::from_be_bytes(size_buffer) as usize;
+
+        let mut values_buffer = vec![];
+        values_buffer.reserve(size);
+        for _ in 1..size {
+            let val: T = Deserializable::deserialize(stream)?;
+            values_buffer.push(val);
+        }
+        Ok(values_buffer)
     }
 }
 

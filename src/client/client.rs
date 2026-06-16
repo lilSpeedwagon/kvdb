@@ -1,3 +1,4 @@
+use std::io;
 use std::io::Write;
 use std::net;
 use std::time;
@@ -102,14 +103,32 @@ impl Client {
 
     /// Run a single command on a remote server.
     /// The client must be connected to a remote server.
-    pub fn execute(&mut self, cmd: types::Command) -> types::Result<()> {
+    pub fn execute(&mut self, cmd: types::Command) -> types::Result<types::CommandResult> {
         let socket = self.get_socket()?;
         
+        log::debug!("Sending command {}", cmd);
         let request_data = Self::serialize(cmd)?;
         socket.write(&request_data)?;
 
-        // TODO: recv and deserialize on fly
+        let mut reader = io::BufReader::new(socket);
+        let mut response = proto::models::Response::deserialize(&mut reader)?;
 
-        Ok(())
+        if response.commands.len() < 1 {
+            return Err(
+                Box::from(format!("Command result is not found"))
+            );
+        }
+        let result_or_err = response.commands.remove(0).result;
+
+        match result_or_err {
+            proto::models::CommandResultOrError::Result{ result } => {
+                Ok(result)
+            },
+            proto::models::CommandResultOrError::Error{ error_message } => {
+                Err(
+                    Box::from(format!("Command execution error: {}", error_message))
+                )
+            },
+        }
     }
 }
