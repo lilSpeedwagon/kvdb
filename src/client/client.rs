@@ -82,14 +82,17 @@ impl Client {
             command: cmd,
         };
         let commands = vec![request_command];
+        let commands_count = commands.len();
         let mut body_buffer: Vec<u8> = vec!();
-        commands.serialize(&mut body_buffer)?;
+        for cmd in commands {
+            cmd.serialize(&mut body_buffer)?;
+        }
         
         let header = proto::models::RequestHeader{
             version: proto::version::PROTO_VERSION,
             keep_alive: 0u8,  // TODO: support keep alive
             reserved: 0u8,
-            command_count: commands.len() as u32,
+            command_count: commands_count as u32,
             body_size: body_buffer.len() as u32,
             reserved2: 0u32,
         };

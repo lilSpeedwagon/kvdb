@@ -111,17 +111,21 @@ fn handle_connection(
             };
             responses.push(response_command);
         }
+        let responses_count = responses.len();
         
         // Prepare and write back the response.
         let mut response_body_buffer = vec![];
-        responses.serialize(&mut response_body_buffer)?;
+        for response in responses {
+            response.serialize(&mut response_body_buffer)?;
+        }
         let body_size = response_body_buffer.len();
 
         let response_header = proto::models::ResponseHeader{
             version: proto::version::PROTO_VERSION,
-            command_count: responses.len() as u16,
+            reserved: 0u16,
+            command_count: responses_count as u32,
             body_size: body_size as u32,
-            reserved: 0u32,
+            reserved2: 0u32,
         };
 
         let mut writer = io::BufWriter::new(&mut stream);

@@ -13,6 +13,17 @@ pub enum Value {
     String { value: String },
 }
 
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Value::String { value } => {
+                write!(f, "{}", value)?;
+                Ok(())
+            },
+        }
+    }
+}
+
 pub enum Command {
     Get { key: Key },
     Set { key: Key, value: Value },

@@ -1,6 +1,8 @@
-use std::{fmt, io::Write};
+use std::io::Write;
 
 use crate::types::{self, Deserializable, Serializable};
+
+const MAX_COMMANDS: u32 = 1000;
 
 
 impl types::Deserializable for types::Value {
@@ -20,6 +22,7 @@ impl types::Serializable for types::Value {
     fn serialize(&self, stream: &mut dyn std::io::Write) -> types::Result<()> {
         match self {
             types::Value::String { value } => {
+                ('s' as u8).serialize(stream)?;
                 value.serialize(stream)?;
             },
         }
@@ -114,6 +117,19 @@ impl types::Serializable for RequestHeader {
     }
 }
 
+impl std::fmt::Display for RequestHeader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "<version={}; keep_alive={}; command_count={}, body_size={}>",
+            self.version,
+            self.keep_alive,
+            self.command_count,
+            self.body_size,
+        )
+    }
+}
+
 pub struct RequestCommand {
     pub id: u32,
     pub command: types::Command,
@@ -149,7 +165,12 @@ impl types::Deserializable for Request {
         let header: RequestHeader = types::Deserializable::deserialize(stream)?;
         // TODO: limit max request body size for both announced size in header and the real size.
 
+        if header.command_count > MAX_COMMANDS {
+            return Err(Box::from(format!("Max commands per request {}", MAX_COMMANDS)));
+        }
+
         let mut commands = vec![];
+        commands.reserve(header.command_count as usize);
         for _ in 0..header.command_count {
             let cmd: RequestCommand = types::Deserializable::deserialize(stream)?;
             commands.push(cmd);
@@ -172,8 +193,8 @@ impl types::Serializable for Request {
     }
 }
 
-impl fmt::Display for Request {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl std::fmt::Display for Request {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
             "<version={}; keep_alive={}; command_count={}, body_size={}>",
@@ -187,17 +208,19 @@ impl fmt::Display for Request {
 
 pub struct ResponseHeader {
     pub version: u16,
-    pub command_count: u16,
+    pub reserved: u16,
+    pub command_count: u32,
     pub body_size: u32,
-    pub reserved: u32,
+    pub reserved2: u32,
 }
 
 impl types::Serializable for ResponseHeader {
     fn serialize(&self, stream: &mut dyn std::io::Write) -> types::Result<()> {
         self.version.serialize(stream)?;
+        self.reserved.serialize(stream)?;
         self.command_count.serialize(stream)?;
         self.body_size.serialize(stream)?;
-        self.reserved.serialize(stream)?;
+        self.reserved2.serialize(stream)?;
         Ok(())
     }
 }
@@ -207,9 +230,10 @@ impl types::Deserializable for ResponseHeader {
         Ok(
             ResponseHeader {
                 version: types::Deserializable::deserialize(stream)?,
+                reserved: types::Deserializable::deserialize(stream)?,
                 command_count: types::Deserializable::deserialize(stream)?,
                 body_size: types::Deserializable::deserialize(stream)?,
-                reserved: types::Deserializable::deserialize(stream)?,
+                reserved2: types::Deserializable::deserialize(stream)?,
             }
         )
     }
@@ -332,17 +356,29 @@ impl types::Serializable for Response {
 
 impl types::Deserializable for Response {
     fn deserialize(stream: &mut dyn std::io::Read) -> types::Result<Self> where Self: Sized {
+        let header = ResponseHeader::deserialize(stream)?;
+
+        if header.command_count > MAX_COMMANDS {
+            return Err(Box::from(format!("Max commands per request {}", MAX_COMMANDS)));
+        }
+
+        let mut commands = vec![];
+        commands.reserve(header.command_count as usize);
+        for _ in 0..header.command_count {
+            let cmd = ResponseCommand::deserialize(stream)?;
+            commands.push(cmd);
+        }
         Ok(
             Response {
-                header: Deserializable::deserialize(stream)?,
-                commands: Deserializable::deserialize(stream)?,
+                header: header,
+                commands: commands,
             }
         )
     }
 }
 
-impl fmt::Display for Response {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl std::fmt::Display for Response {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
             "<version={}; command_count={}; body_size={}>",

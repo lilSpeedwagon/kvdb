@@ -72,6 +72,8 @@ impl types::Deserializable for String {
         stream.read_exact(&mut size_buffer)?;
         let size = u64::from_be_bytes(size_buffer) as usize;
 
+        // TODO: limit mem allocation for the arbitrary size values
+
         let mut str_buffer = vec![0u8; size];
         str_buffer.reserve(size);
         stream.read_exact(&mut str_buffer[..])?;
